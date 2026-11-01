@@ -230,8 +230,8 @@ android {
         applicationId = "be.mygod.vpnhotspot"
         minSdk = 29
         targetSdk = 37
-        versionCode = 2012
-        versionName = "3.0.8-vh1"
+        versionCode = 2013
+        versionName = "3.0.8-vh2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     splits {

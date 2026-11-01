@@ -324,17 +324,21 @@ fun TetheringScreen(
                     var active = managed.contains(iface)
                     val watch = monitored.contains(iface)
                     val ifaceInactive = inactive.contains(iface)
-                    // v-vh1: RAM-kill уvн уничтожает Compose-стейт, но root-стек (fastwatch)
-                    // продолжает держать ядро (правило 17500 wlan2→tun0) и /data/adb-файлы.
-                    // Если ядро живо для этого iface (VPN идёт) — плашка обязана рисоваться ВКЛ.
-                    // Приоритет: факт ядра > managed-набор (врать ядро не умеет).
-                    var kstate = remember(iface) { VhPersist.ifaceEnabled(iface) }
-                    if (kstate != null && !ifaceInactive) active = kstate
+                    // v-vh2: RAM-kill стирает Compose-стейт, но root-стек (fastwatch)
+                    // держит ядро (17500 wlan2→tun0). Факт ядра читаем ТОЛЬКО из кэша
+                    // (UI никогда не ждёт su-процесс), обновление асинхронное.
+                    // Приоритет: факт ядра (кэш) > managed-набор; ядро не врёт.
+                    val kstate = remember(iface) { mutableStateOf(VhPersist.ifaceEnabledCached(iface)) }
+                    LaunchedEffect(iface) {
+                        VhPersist.refreshAsync(iface) { res -> kstate.value = res }
+                    }
+                    if (kstate.value != null && !ifaceInactive) active = kstate.value!!
                     val vpnTethering = active && !ifaceInactive
-                    // v-vh1: запоминаем нажатия юзера — после RAM-kill UI восстановится
-                    // из ядра-факта (fastwatch), тут кэш лишь подстраховка между realtime.
+                    // v-vh2: запоминаем только фактическое разделение UI между Compose (managed)
+                    // и ядром (rule) — чтобы RAM-kill восстановил корректную картину.
                     LaunchedEffect(vpnTethering) {
-                        VhPersist.cacheUiState(if (VhPersist.ifaceEnabled(iface) == true) true else vpnTethering)
+                        val kfact = VhPersist.ifaceEnabledCached(iface)
+                        VhPersist.cacheUiState(kfact ?: vpnTethering)
                     }
                     PreferenceGroup {
                         row("vpn_tethering") {

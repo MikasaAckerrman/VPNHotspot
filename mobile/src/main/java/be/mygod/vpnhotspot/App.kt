@@ -132,11 +132,12 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ServiceNotification.updateNotificationChannels()
-        // v-vh1 (RAM-kill UX): при запуске приложения синхронизируем cached-стейт
-        // с фактом ядра (правило 17500 wlan2→tun0). Особенно важно после RAM-kill:
-        // Fastwatch root-стека продолжает держать раздачу, а UI рождается ВЫКЛ —
-        // кэш восстановит ВКЛ до первого факта ядра (и Compose перерисует).
-        kotlin.runCatching { VhPersist.cacheUiState(VhPersist.isVpnShareEnabledByKernel()) }
+        // v-vh2 (RAM-kill UX):
+        // а) НИ ОДНОЙ су-команды на main-thread (v1 блокировала — юзер жаловался на лаг).
+        // б) Первое узнавание ядра — на фоне (exec-thread), IU через Compose счастливо
+        //    перерисуется когда кэш придёт (ASA fastwatch с ours — всегда факт).
+        // в) iface — wlan2, канон v-стека.
+        kotlin.runCatching { VhPersist.warmUpOnLaunch("wlan2") }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
