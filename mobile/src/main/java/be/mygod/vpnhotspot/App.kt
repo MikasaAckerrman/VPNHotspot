@@ -132,6 +132,11 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ServiceNotification.updateNotificationChannels()
+        // v-vh1 (RAM-kill UX): при запуске приложения синхронизируем cached-стейт
+        // с фактом ядра (правило 17500 wlan2→tun0). Особенно важно после RAM-kill:
+        // Fastwatch root-стека продолжает держать раздачу, а UI рождается ВЫКЛ —
+        // кэш восстановит ВКЛ до первого факта ядра (и Compose перерисует).
+        kotlin.runCatching { VhPersist.cacheUiState(VhPersist.isVpnShareEnabledByKernel()) }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

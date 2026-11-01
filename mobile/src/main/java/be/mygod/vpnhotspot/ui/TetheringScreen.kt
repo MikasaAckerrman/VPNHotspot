@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -70,6 +71,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import be.mygod.vpnhotspot.VhPersist
 import be.mygod.vpnhotspot.App.Companion.app
 import be.mygod.vpnhotspot.LocalOnlyHotspotService
 import be.mygod.vpnhotspot.R
@@ -319,10 +321,21 @@ fun TetheringScreen(
             }
             for (iface in interfaceIfaces) {
                 item(key = "interface_$iface") {
-                    val active = managed.contains(iface)
+                    var active = managed.contains(iface)
                     val watch = monitored.contains(iface)
                     val ifaceInactive = inactive.contains(iface)
+                    // v-vh1: RAM-kill уvн уничтожает Compose-стейт, но root-стек (fastwatch)
+                    // продолжает держать ядро (правило 17500 wlan2→tun0) и /data/adb-файлы.
+                    // Если ядро живо для этого iface (VPN идёт) — плашка обязана рисоваться ВКЛ.
+                    // Приоритет: факт ядра > managed-набор (врать ядро не умеет).
+                    var kstate = remember(iface) { VhPersist.ifaceEnabled(iface) }
+                    if (kstate != null && !ifaceInactive) active = kstate
                     val vpnTethering = active && !ifaceInactive
+                    // v-vh1: запоминаем нажатия юзера — после RAM-kill UI восстановится
+                    // из ядра-факта (fastwatch), тут кэш лишь подстраховка между realtime.
+                    LaunchedEffect(vpnTethering) {
+                        VhPersist.cacheUiState(if (VhPersist.ifaceEnabled(iface) == true) true else vpnTethering)
+                    }
                     PreferenceGroup {
                         row("vpn_tethering") {
                             TetheringRow(
