@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RotIP</string>
+    <string name="tile_rotate">Ротировать IP</string>
+    <string name="idle_notification">RotIP: планировщик активен</string>
+    <string name="channel_scheduler">RotIP scheduler</string>
+</resources>
