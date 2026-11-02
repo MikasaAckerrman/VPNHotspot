@@ -19,11 +19,12 @@ class RotipApp : Application() {
         Shell.setDefaultBuilder(builder)
         // ФАКТ (ревью 05.11): Shell.isAppGrantedRoot() до инициализации root-shell
         // возвращает null → UI показывал «root ПОТЕРЯН» даже при выданном руте.
-        //Поэтому: одна фоновая инициализация root-shell при старте приложения
-        // — это и есть момент запроса su у ReSukiSU (если ещё не выдан).
+        // Одна фоновая инициализация root-shell при старте:
+        // — это и есть момент запроса su у ReSukiSU (если ещё не выдан);
+        // — кэш Engine обновляется немедленно, UI больше НЕ ждёт (фикс «долгой проверки»).
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val ok = Shell.getShell().isRoot
+                val ok = Engine.checkRootBlocking()
                 android.util.Log.i(TAG, "root shell init result: $ok")
             } catch (t: Throwable) {
                 android.util.Log.i(TAG, "root shell init failed: ${t.message}")

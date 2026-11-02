@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * MVP UI: big ROTATE button + status line + last history entries.
@@ -50,10 +52,25 @@ class MainActivity : ComponentActivity() {
                 Root()
             }
         }
-        lifecycleScope.launch {
+        // РЕВЬЮ 05.11 (юзер: «долгая проверка рута»): Shell.getShell() — СИНХРОННАЯ
+        // долгая операция (су-spawn, 0..15 с). НЕЛЬЗЯ вызывать в Main-диспередe!
+        // lifecycleScope.launch{} по умолчанию Main → зависание UI + ANR-риск.
+        // Фикс: все тяжёлые операции на Dispatchers.IO, апдейт state через Main.
+        lifecycleScope.launch(Dispatchers.IO) {
             Engine.initState(applicationContext)   // cooldown-память из persist-файла
             val ip = Engine.fetchIp(applicationContext)
-            state.value = state.value.copy(ipBefore = ip, rootOk = Engine.hasRoot())
+            withContext(Dispatchers.Main) {
+                state.value = state.value.copy(ipBefore = ip, rootOk = Engine.hasRoot())
+            }
+        }
+        // Отдельная фоновая root-проверка: RootApp уже стартовал checkRootBlocking
+        // в RotipApp.onCreate на IO — здесь только читаем кэш (мгновенно).
+        lifecycleScope.launch(Dispatchers.IO) {
+            // Страховка: если RotipApp-проверка ещё не завершилась — досинхронизируем тут.
+            if (Engine.rootUnknown()) Engine.checkRootBlocking()
+            withContext(Dispatchers.Main) {
+                state.value = state.value.copy(rootOk = Engine.hasRoot())
+            }
         }
     }
 
@@ -83,15 +100,19 @@ class MainActivity : ComponentActivity() {
             Button(
                 onClick = {
                     state.value = state.value.copy(busy = true, error = null)
-                    lifecycleScope.launch {
+                    // РЕВЬЮ 05.11: Heavy rotate (Shell + сеть, до ~70 c) — строго на IO-потоке.
+                    lifecycleScope.launch(Dispatchers.IO) {
                         val r = Engine.rotate(applicationContext)
-                        state.value = state.value.copy(
-                            busy = false,
-                            ipBefore = r.ipAfter,
-                            ipAfter = r.ipAfter,
-                            lastMode = r.modeUsed?.name ?: "",
-                            error = r.error
-                        )
+                        withContext(Dispatchers.Main) {
+                            state.value = state.value.copy(
+                                busy = false,
+                                ipBefore = r.ipAfter,
+                                ipAfter = r.ipAfter,
+                                lastMode = r.modeUsed?.name ?: "",
+                                error = r.error,
+                                rootOk = Engine.hasRoot()
+                            )
+                        }
                     }
                 },
                 enabled = !ui.busy

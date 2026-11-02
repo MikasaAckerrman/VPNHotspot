@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object Engine {
 
+    const val TAG_LOG = "RotIP"
+
     enum class Mode { DATA, AIRPLANE }
 
     data class Result(
@@ -60,13 +62,23 @@ object Engine {
     @Volatile var cooldownMs: Long = 90_000L
     @Volatile var lastRotateAt: Long = 0L
 
-    /** Проверить, что приложение имеет живой root (su).
-     *  ФАКТ (ревью 05.11): Shell.isAppGrantedRoot() до первого exec возвращает null
-     *  — его показывало «ПОТЕРЯН» при выданном руте. Shell.getShell() инициализирует
-     *  root-shell (и есть место су-запроса ReSukiSU), .isRoot — честный флаг. */
-    fun hasRoot(): Boolean = try {
-        Shell.getShell().isRoot
-    } catch (_: Throwable) {
+    /** Флаг root (кэш) — мгновенно, НЕ блокирует UI.
+     *  Обновляется через checkRootBlocking() (синхронный, ТОЛЬКО на IO-потоке). */
+    @Volatile private var rootStateCache: Boolean? = null
+    fun hasRoot(): Boolean = rootStateCache == true
+    fun rootUnknown(): Boolean = rootStateCache == null
+    fun setRootState(v: Boolean?) { rootStateCache = v }
+
+    /** Синхронная проверка root. Долгая (retet su spawn при отсутствии grant по
+     *  текущему UID), поэтому вызывать ТОЛЬКО на Dispatchers.IO. */
+    fun checkRootBlocking(): Boolean = try {
+        val ok = Shell.getShell().isRoot
+        rootStateCache = ok
+        android.util.Log.i(TAG_LOG, "root shell init result: $ok")
+        ok
+    } catch (t: Throwable) {
+        rootStateCache = false
+        android.util.Log.i(TAG_LOG, "root shell init failed: ${t.message}")
         false
     }
 
@@ -78,6 +90,8 @@ object Engine {
         try {
             mutex.withLock {
                 val t0 = System.currentTimeMillis()
+                // Если root не проверялся — синхронно один раз (только на IO-потоке).
+                if (rootUnknown()) checkRootBlocking()
                 if (!hasRoot()) {
                     return Result(false, null, null, null, 0, false, "root_lost")
                 }
@@ -235,15 +249,22 @@ object Engine {
             // РЕВЬЮ 05.11 (юзер): «не пришлось бы удалять при удалении приложения» —
             // persist-копия в /data/adb/rotip/ переживает uninstall APK (root-путь);
             // при переустановке initState() читает её обратно.
-            try {
-                Shell.cmd("mkdir -p /data/adb/rotip && cp ${historyFile(context).canonicalPath} /data/adb/rotip/history.jsonl").exec()
-            } catch (_: Throwable) { }
+            // Дефект-фикс: если root не выдан (кэш=false) НЕ запускаем Shell.cmd —
+            // каждый су-spawn даст ~15с таймаут (это и был «долгая проверка рута»).
+            if (hasRoot()) {
+                try {
+                    Shell.cmd("mkdir -p /data/adb/rotip && cp ${historyFile(context).canonicalPath} /data/adb/rotip/history.jsonl").exec()
+                } catch (_: Throwable) { }
+            }
         } catch (_: Throwable) { }
     }
 
     /** Загрузить lastRotateAt из persist-файла (root-зеркало приоритет, filesDir — fallback).
-     *  Вызывать один раз при старте приложения (initState). */
+     *  Вызывать один раз при старте приложения (initState).
+     *  Дефект-фикс: при root=false НЕ дергаем Shell.cmd (15-сек су-spawn таймаут). */
     fun initState(context: Context) {
+        if (rootUnknown()) { checkRootBlocking() }
+        if (!hasRoot()) return
         try {
             val ts = run {
                 val r = Shell.cmd("tail -n 1 /data/adb/rotip/history.jsonl 2>/dev/null").exec()
