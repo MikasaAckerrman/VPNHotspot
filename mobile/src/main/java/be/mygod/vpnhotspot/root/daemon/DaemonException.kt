@@ -9,12 +9,8 @@ class DaemonException(
     private val callId: Long? = null,
     private val daemonClassName: String = "vpnhotspotd",
     cause: Throwable = ReportException(report, daemonClassName),
-) : RemoteException(report.toExceptionMessage()), CrashlyticsKeyProvider {
+) : RemoteException(report.toExceptionMessage()) {
     companion object {
-        private val INVALID_CRASHLYTICS_KEY_CHAR = Regex("[^A-Za-z0-9_.-]")
-
-        private fun sanitizeCrashlyticsKey(key: String) =
-            INVALID_CRASHLYTICS_KEY_CHAR.replace(key, "_").ifEmpty { "detail" }.take(64)
 
         private fun DaemonErrorReport.toExceptionMessage() = buildString {
             append(context).append(": ").append(message)

@@ -114,6 +114,9 @@ object VhPersist {
         if (syncIntent) updateKernelIntent(enabled)
     }
 
+    /** v-vh6: синхронное чтение последнего юзер-состояния из prefs (первый кадр UI). */
+    fun cachedUiState(): Boolean = prefs.getBoolean(KEY_UI_CACHE, false)
+
     /**
      * v-vh4: ЮЗЕР-ТАП — единственный авторитет на 5-секундное окно.
      * Реализует: (1) мгновенный UI-снимок (snap) без чтения ядра;
