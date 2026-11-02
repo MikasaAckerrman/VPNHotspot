@@ -30,6 +30,9 @@ object Engine {
 
     enum class Mode { DATA, AIRPLANE }
 
+    /** Порядок эскалации (проверено на телефоне 05.11): AIRPLANE меняет IP стабильно, DATA — fallback. */
+    val ROTATION_ORDER: List<Mode> = listOf(Mode.AIRPLANE, Mode.DATA)
+
     data class Result(
         val ok: Boolean,          // ротация прошла и IP изменился
         val modeUsed: Mode?,
