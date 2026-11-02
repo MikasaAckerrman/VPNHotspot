@@ -16,22 +16,13 @@ import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Ядро RotIP: бесконечная ротация внешнего IP через root.
+ * Ядро RotIP v0.3: бесконечная ротация внешнего IP через root.
  *
- * Примитивы (только то, что реально есть на vivo SM8650 / Android 15):
- *  - DATA:      su -c "svc data disable|enable"   (пересоздание PDU-сессии)
- *  - AIRPLANE:  su -c "cmd connectivity airplane-mode enable|disable"
- *  - RIL:       НЕ ИСПОЛЬЗУЕМ — RIL-демон на vivo = qcrilNrd,
- *               рестарт непредсказуем и НЕ нужен (DATA/AIRPLANE хватает).
- *  - WARP:      Ф4 (не в MVP).
- *
- * Эскалация: DATA ->财经大学 AIRPLANE. Если после двух шагов IP тот же —
- * фиксируем SAME_IP и возвращаем результат вызывающему (UI/услуга решает).
- *
- * Сеть: детект внешнего IP делаем ПЕРЕ-СЕТЬЮ (TRANSPORT_CELLULAR) без VPN,
- * если эта сеть существует. Иначе — дефолт-роут. VPN может игнорировать
- * network.bindSocket, если у него kill-switch/per-app — помечено как
- * эксп.: уточняем в Ф0.2 тестах.
+ * v0.3 изменения (ревью 05.11 23:35, юзер: «ротация долго идёт, IP не показывает»):
+ *  - добавлен progress-каллбек: UI видит этапы (определяю IP / airplane ON / OFF / жду сеть),
+ *    «busy» перестал быть загадочной 60-сек паузой без текста;
+ *  - waitForNetwork timeout 26 c → 14 c, авто-повтор 4 → 2 (SAME_IP повторяется редко);
+ *  - fetchIp:ellular-first c perceived timeout 9 c → 6 c; любой fail → default-route fallback.
  */
 object Engine {
 
@@ -49,28 +40,25 @@ object Engine {
         val error: String? = null
     )
 
-    /** last-R-rotation history — в памяти для UI + JSONL на диск. */
-    val history: MutableList<Result> = java.util.concurrent.CopyOnWriteArrayList()
+    /** Прогресс-каллбек (вызывается на IO-потоке rotation; UI сам переключает на Main). */
+    @Volatile var onProgress: ((String) -> Unit)? = null
+    private fun progress(msg: String) { try { onProgress?.invoke(msg) } catch (_: Throwable) {} }
+
+    /** История в памяти + JSONL на диске. */
+    val history: java.util.concurrent.CopyOnWriteArrayList<Result> = java.util.concurrent.CopyOnWriteArrayList()
     val busy = AtomicBoolean(false)
     private val mutex = Mutex()
 
-    /** Порядок эскалации по факту теста F0.2 (05.11): на этой прошивке DATA-toggle НЕ меняет
-     *  операторный IP (CGNAT ref-ref у vodens subscriber), AIRPLANE-تحديث модема меняет стабильно. */
-    val ROTATION_ORDER: List<Mode> = listOf(Mode.AIRPLANE, Mode.DATA)
-
-    /** Гварды (изменяются из UI/сервиса). */
     @Volatile var cooldownMs: Long = 90_000L
     @Volatile var lastRotateAt: Long = 0L
 
-    /** Флаг root (кэш) — мгновенно, НЕ блокирует UI.
-     *  Обновляется через checkRootBlocking() (синхронный, ТОЛЬКО на IO-потоке). */
+    // root-cache (non-blocking для UI)
     @Volatile private var rootStateCache: Boolean? = null
     fun hasRoot(): Boolean = rootStateCache == true
     fun rootUnknown(): Boolean = rootStateCache == null
     fun setRootState(v: Boolean?) { rootStateCache = v }
 
-    /** Синхронная проверка root. Долгая (retet su spawn при отсутствии grant по
-     *  текущему UID), поэтому вызывать ТОЛЬКО на Dispatchers.IO. */
+    /** Синхронная проверка root; ТОЛЬКО на Dispatchers.IO. */
     fun checkRootBlocking(): Boolean = try {
         val ok = Shell.getShell().isRoot
         rootStateCache = ok
@@ -82,31 +70,36 @@ object Engine {
         false
     }
 
-    suspend fun rotate(context: Context, allowed: List<Mode> = ROTATION_ORDER): Result {
-        // Reentrant guard: не пускать параллельные ротации (требование Р_results-корректности).
+    suspend fun rotate(context: Context, allowed: List<Mode> = listOf(Mode.AIRPLANE, Mode.DATA)): Result {
         if (busy.getAndSet(true)) {
             return Result(false, null, null, null, 0, false, "busy")
         }
         try {
             mutex.withLock {
                 val t0 = System.currentTimeMillis()
-                // Если root не проверялся — синхронно один раз (только на IO-потоке).
-                if (rootUnknown()) checkRootBlocking()
+                if (rootUnknown()) { progress("проверяю root..."); checkRootBlocking() }
                 if (!hasRoot()) {
+                    progress("root отсутствует")
                     return Result(false, null, null, null, 0, false, "root_lost")
                 }
+
+                progress("определяю текущий IP...")
                 val ipBefore = fetchIp(context)
+                progress("текущий IP: ${ipBefore ?: "??"}")
+
                 var mode_used: Mode? = null
                 var lastError: String? = null
                 for (mode in allowed) {
+                    progress("применяю ${mode.name.lowercase()}...")
                     val ok = execPrimitive(mode)
                     if (!ok) { lastError = mode.name.lowercase() + "_failed"; continue }
                     mode_used = mode
-                    // Ждём поднятия данных (PDU ~10-15 c, airplane ~15-20 c).
-                    if (!waitForNetwork(context, timeoutMs = 26_000L)) {
+                    progress("жду сеть (после ${mode.name.lowercase()})...")
+                    if (!waitForNetwork(context, timeoutMs = 14_000L)) {
                         lastError = "no_network_after_" + mode.name.lowercase()
                         continue
                     }
+                    progress("определяю новый IP...")
                     val ipAfter = fetchIp(context)
                     val r = Result(
                         ok = ipAfter != null && ipBefore != null && ipBefore != ipAfter,
@@ -114,17 +107,19 @@ object Engine {
                         ipBefore = ipBefore,
                         ipAfter = ipAfter,
                         elapsedMs = System.currentTimeMillis() - t0,
-                        sameIp = ipAfter == ipBefore || (ipBefore == null && ipAfter == null),
+                        sameIp = ipAfter == ipBefore,
                         error = lastError
                     )
                     if (r.ipAfter != null) {
                         lastRotateAt = System.currentTimeMillis()
                         history.add(0, r)
-                        if (history.size > 200) { while (history.size > 100) history.removeAt(history.size - 1) }
+                        if (history.size > 100) { while (history.size > 100) history.removeAt(history.size - 1) }
                         appendHistoryFile(context, r)
+                        progress(if (r.sameIp) "SAME_IP: ${r.ipAfter}" else "готово: ${r.ipAfter}")
                         return r
                     }
                 }
+                progress("ротация не удалась: $lastError")
                 return Result(false, mode_used, ipBefore, null,
                     System.currentTimeMillis() - t0, sameIp = false, error = lastError ?: "no_mode_succeeded")
             }
@@ -133,7 +128,6 @@ object Engine {
         }
     }
 
-    /** Оставшийся cooldown (мс) до следующей ротации планировщика. */
     fun cooldownRemaining(): Long {
         val passed = System.currentTimeMillis() - lastRotateAt
         return if (passed >= cooldownMs) 0L else cooldownMs - passed
@@ -168,7 +162,6 @@ object Engine {
 
     // ---- Сеть ----
 
-    /** Внешний IP: сначала через TRANSPORT_CELLULAR (обход VPN), иначе дефолт-роут. */
     suspend fun fetchIp(context: Context): String? = withContext(Dispatchers.IO) {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val cellular: Network? = try {
@@ -178,12 +171,13 @@ object Engine {
                         && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             }
         } catch (_: Throwable) { null }
+
         val url = "https://api.ipify.org"
 
         suspend fun fetchHttp(conn: HttpURLConnection): String? {
             return try {
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
+                conn.connectTimeout = 6000
+                conn.readTimeout = 6000
                 conn.requestMethod = "GET"
                 conn.inputStream.bufferedReader().readText().trim().takeIf { it.isNotEmpty() }
             } catch (_: Throwable) {
@@ -195,24 +189,18 @@ object Engine {
 
         var result: String? = null
 
-        // Предпочтительно: ИЗ CELLULAR-сети (равноценно через network, VPN-ipv4 может маскировать).
         if (cellular != null) {
             try {
                 val conn = cellular.openConnection(URL(url)) as HttpURLConnection
-                result = withTimeoutOrNull(9000L) { fetchHttp(conn) }
-            } catch (_: Throwable) {
-                // падение в fallback
-            }
+                result = withTimeoutOrNull(7000L) { fetchHttp(conn) }
+            } catch (_: Throwable) { }
         }
 
-        // Fallback: дефолт-роут (в VPN-режиме этот IP может быть не мобильным).
         if (result == null) {
             try {
                 val conn = URL(url).openConnection() as HttpURLConnection
-                result = withTimeoutOrNull(9000L) { fetchHttp(conn) }
-            } catch (_: Throwable) {
-                null
-            }
+                result = withTimeoutOrNull(7000L) { fetchHttp(conn) }
+            } catch (_: Throwable) { null }
         }
         result
     }
@@ -220,9 +208,9 @@ object Engine {
     private suspend fun waitForNetwork(context: Context, timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val ip = withTimeoutOrNull(9000L) { fetchIp(context) }
+            val ip = withTimeoutOrNull(3000L) { fetchIp(context) }
             if (ip != null) return true
-            kotlinx.coroutines.delay(1500L)
+            kotlinx.coroutines.delay(1200L)
         }
         return false
     }
@@ -246,11 +234,6 @@ object Engine {
                 append("\"}")
             }
             historyFile(context).appendText(json + "\n")
-            // РЕВЬЮ 05.11 (юзер): «не пришлось бы удалять при удалении приложения» —
-            // persist-копия в /data/adb/rotip/ переживает uninstall APK (root-путь);
-            // при переустановке initState() читает её обратно.
-            // Дефект-фикс: если root не выдан (кэш=false) НЕ запускаем Shell.cmd —
-            // каждый су-spawn даст ~15с таймаут (это и был «долгая проверка рута»).
             if (hasRoot()) {
                 try {
                     Shell.cmd("mkdir -p /data/adb/rotip && cp ${historyFile(context).canonicalPath} /data/adb/rotip/history.jsonl").exec()
@@ -259,27 +242,23 @@ object Engine {
         } catch (_: Throwable) { }
     }
 
-    /** Загрузить lastRotateAt из persist-файла (root-зеркало приоритет, filesDir — fallback).
-     *  Вызывать один раз при старте приложения (initState).
-     *  Дефект-фикс: при root=false НЕ дергаем Shell.cmd (15-сек су-spawn таймаут). */
+    /** Инициализация состояния из persist-файла (root-зеркало приоритет).
+     *  При root=false НЕ дергает Shell (возвращает быстро). */
     fun initState(context: Context) {
         if (rootUnknown()) { checkRootBlocking() }
         if (!hasRoot()) return
         try {
-            val ts = run {
-                val r = Shell.cmd("tail -n 1 /data/adb/rotip/history.jsonl 2>/dev/null").exec()
-                val line = r.out.lastOrNull { it.isNotBlank() }
-                Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()
+            val r = Shell.cmd("tail -n 1 /data/adb/rotip/history.jsonl 2>/dev/null").exec()
+            val line = r.out.lastOrNull { it.isNotBlank() }
+            val ts = Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()
+            if (ts != null) { lastRotateAt = ts; return }
+        } catch (_: Throwable) { }
+        try {
+            val f = historyFile(context)
+            if (f.exists()) {
+                val line = f.readLines().lastOrNull { it.isNotBlank() }
+                Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()?.let { lastRotateAt = it }
             }
-            if (ts == null) {
-                val f = historyFile(context)
-                if (f.exists()) {
-                    val line = f.readLines().lastOrNull { it.isNotBlank() }
-                    Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()
-                } else 0
-            } else ts
-        } catch (_: Throwable) {
-            0
-        }?.let { lastRotateAt = it }
+        } catch (_: Throwable) { }
     }
 }

@@ -14,12 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -29,8 +28,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * MVP UI: big ROTATE button + status line + last history entries.
- * ViewModel так же усложняет MVP: держим state как mutableStateOf прямо в Activity.
+ * MVP UI v0.3: прогресс-текст этапов (определяю IP / airplane ON / OFF / жду сеть),
+ * мгновенный IP по открытию, история в LazyColumn. Тяжёлое — ALWAYS на Dispatchers.IO.
  */
 class MainActivity : ComponentActivity() {
 
@@ -39,6 +38,7 @@ class MainActivity : ComponentActivity() {
         val ipAfter: String? = null,
         val lastMode: String = "",
         val busy: Boolean = false,
+        val busyMsg: String = "",
         val rootOk: Boolean? = null,
         val error: String? = null
     )
@@ -47,15 +47,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                Root()
+        setContent { MaterialTheme { Root() } }
+
+        // Прогресс-каллбек Engine → busyMsg (только UI, из IO через Main-switch внутри колбекa).
+        Engine.onProgress = { msg ->
+            // Engine вызывает Колбек из IO-потока — безопасно переключаем.
+            lifecycleScope.launch(Dispatchers.Main) {
+                state.value = state.value.copy(busyMsg = msg)
             }
         }
-        // РЕВЬЮ 05.11 (юзер: «долгая проверка рута»): Shell.getShell() — СИНХРОННАЯ
-        // долгая операция (су-spawn, 0..15 с). НЕЛЬЗЯ вызывать в Main-диспередe!
-        // lifecycleScope.launch{} по умолчанию Main → зависание UI + ANR-риск.
-        // Фикс: все тяжёлые операции на Dispatchers.IO, апдейт state через Main.
+
+        // Мгновенный показ root-кеша (Engine уже начал проверку в RotipApp.onCreate):
+        state.value = state.value.copy(rootOk = if (Engine.rootUnknown()) null else Engine.hasRoot())
+
         lifecycleScope.launch(Dispatchers.IO) {
             Engine.initState(applicationContext)   // cooldown-память из persist-файла
             val ip = Engine.fetchIp(applicationContext)
@@ -63,10 +67,7 @@ class MainActivity : ComponentActivity() {
                 state.value = state.value.copy(ipBefore = ip, rootOk = Engine.hasRoot())
             }
         }
-        // Отдельная фоновая root-проверка: RootApp уже стартовал checkRootBlocking
-        // в RotipApp.onCreate на IO — здесь только читаем кэш (мгновенно).
         lifecycleScope.launch(Dispatchers.IO) {
-            // Страховка: если RotipApp-проверка ещё не завершилась — досинхронизируем тут.
             if (Engine.rootUnknown()) Engine.checkRootBlocking()
             withContext(Dispatchers.Main) {
                 state.value = state.value.copy(rootOk = Engine.hasRoot())
@@ -86,27 +87,36 @@ class MainActivity : ComponentActivity() {
             Text(
                 "root: " + when (ui.rootOk) {
                     true -> "OK"
-                    false -> "ПОТЕРЯН (нужно запустить root-сценарий)"
-                    null -> "проверяем..."
+                    false -> "нет (выдай root в ReSukiSU)"
+                    null -> "проверяю..."
                 },
                 style = MaterialTheme.typography.bodySmall
             )
 
             Text(
-                text = "IP текущий: ${ui.ipBefore ?: "..."}",
+                text = "IP текущий: ${ui.ipBefore ?: (if (ui.busy) "пересчитываю..." else "нет данных")}",
                 style = MaterialTheme.typography.titleMedium
             )
 
+            if (ui.busy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp))
+                    Text(ui.busyMsg.ifEmpty { "работаю..." }, style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                Spacer(Modifier.height(20.dp))
+            }
+
             Button(
                 onClick = {
-                    state.value = state.value.copy(busy = true, error = null)
-                    // РЕВЬЮ 05.11: Heavy rotate (Shell + сеть, до ~70 c) — строго на IO-потоке.
+                    state.value = state.value.copy(busy = true, busyMsg = "старт...", error = null)
                     lifecycleScope.launch(Dispatchers.IO) {
                         val r = Engine.rotate(applicationContext)
                         withContext(Dispatchers.Main) {
                             state.value = state.value.copy(
                                 busy = false,
-                                ipBefore = r.ipAfter,
+                                busyMsg = "",
+                                ipBefore = r.ipAfter ?: r.ipBefore,
                                 ipAfter = r.ipAfter,
                                 lastMode = r.modeUsed?.name ?: "",
                                 error = r.error,
@@ -120,7 +130,9 @@ class MainActivity : ComponentActivity() {
                 Text(if (ui.busy) "Ротирую..." else "РОТИРОВАТЬ IP")
             }
 
-            if (ui.error != null) Text("Ошибка: ${ui.error}", style = MaterialTheme.typography.bodySmall)
+            if (ui.error != null) {
+                Text("Ошибка: ${ui.error}", style = MaterialTheme.typography.bodySmall)
+            }
 
             Spacer(Modifier.height(8.dp))
             Text("История:", style = MaterialTheme.typography.titleSmall)
@@ -132,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("${r.ipAfter ?: "—"}", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "${if (r.sameIp) "same" else "new "} ${r.modeUsed ?: "-"} ${r.elapsedMs}ms",
+                            "${if (r.sameIp) "same" else "new "} ${r.modeUsed ?: "-"} ${r.elapsedMs / 1000}s",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
