@@ -338,12 +338,9 @@ fun TetheringScreen(
                         active = kstate.value!!
                     }
                     val vpnTethering = active && !ifaceInactive
-                    // v-vh3: кэш + intent-синк: юзер-нажатие через sync-мост,
-                    // официальный путь TetheringScreen → cacheUiState → fastwatch.
-                    LaunchedEffect(vpnTethering) {
-                        val kfact = VhPersist.ifaceEnabledCached(iface)
-                        VhPersist.cacheUiState(kfact ?: vpnTethering)
-                    }
+                    // v-vh4: LaunchedEffect(vpnTethering) с kfact ?: ПРОПАЛ — он был
+                    // гонкой (kernel-fact перекрывал тап юзера). Intent пишет ТОЛЬКО
+                    // userTap (ниже), ядро-факт читает только RAM-kill fallback выше.
                     PreferenceGroup {
                         row("vpn_tethering") {
                             TetheringRow(
@@ -357,6 +354,12 @@ fun TetheringScreen(
                                 checked = vpnTethering,
                                 enabled = !ifaceInactive,
                                 onClick = {
+                                    // v-vh4: юзер-тап = авторитет. Мгновенный latch
+                                    // (snap+kstate без чтения ядра) + intent-файл
+                                    // (su, фон ≤2 с) → fastwatch сходится ≤2 с.
+                                    val turningOn = !active
+                                    VhPersist.userTap(iface, turningOn)
+                                    kstate.value = turningOn
                                     if (active) context.startService(Intent(context, TetheringService::class.java)
                                         .putExtra(TetheringService.EXTRA_REMOVE_INTERFACE, iface))
                                     else context.startForegroundService(Intent(context, TetheringService::class.java)

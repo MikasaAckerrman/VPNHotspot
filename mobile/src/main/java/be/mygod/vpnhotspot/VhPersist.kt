@@ -12,18 +12,17 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * VhPersist v2 (RAM-kill UX, фон-тред).
+ * VhPersist v4 (RAM-kill UX; юзер-тап = авторитет).
  *
- * Задача юзера: «плашка wlan2 = факт ядра; при RAM-kill она должна рисоваться ВКЛ
- * если раздача идёт; никаких блокировок UI, никаких лагов».
+ * Роли:
+ *  - fastwatch/dog root-стек — единственный администратор ядра (rule `17500 wlan2→tun0`);
+ *  - intent-файл /data/adb/.vh_intent + /data/adb/wlan2_mode — единственный КАНТ между
+ *    приложением и fastwatch (пишем su; читает fastwatch оба мира);
+ *  - юзер-тап (userTap) — авторитет на 5 с: kstate-снимок мгновенно, intent фон;
+ *    ядро-факт (refreshAsync) молчит всё окно и не может откатить тап;
+ *  - RAM-kill: managed.isEmpty() → UI рисует kernel-fact из snap (не фиктивный ВЫКЛ).
  *
- * Идеи v2 (fix, взамен v1, которая висела в UI-thread):
- *  - Все вызовы `su -c ip rule` — СТРОГО на фоне (singleExecutor + bounded cache 3 с).
- *  - UI потоки никогда не ждут ядра:得到的 читают только cached-значение.
- *  - Кэш-инвалидируется через 3 с и обновляется на фоне по требованию.
- *
- * Root-скрипт (fastwatch) держит правило `17500 iif wlan2 lookup tun0`
- * при ВКЛ и снимает при ВЫКЛ (управляется из чата юзера или плашки приложения).
+ * Никаких exec на main-thread; никаких потоков-утечек (bounded single executor).
  */
 object VhPersist {
     private const val PREFS = "vh_state"
@@ -37,6 +36,10 @@ object VhPersist {
 
     /** Счётчик запущенных запросов (bounded — больше 1 в очереди не держим). */
     private val inFlight = AtomicInteger(0)
+
+    /** v-vh4: авторитет юзер-тапа (epoch ms последнего тапа; окно 5 с). */
+    private val userLatch = AtomicLong(0)
+    private const val LATCH_MS = 5000L
 
     /** Последний кэш-снимок fact'а ядра (используется UI-thread без блокировки). */
     private data class Snap(val iface: String, val enabled: Boolean?, val ts: Long)
@@ -58,9 +61,13 @@ object VhPersist {
     /**
      * Фоновое обновление кэша (не блокирует UI). Каждый вызов отбивается по
      * TTL-времени и по AtomicInteger (не плодим потоков-сирот).
+     *
+     * v-vh4: ПЕРИОД LATCH — сразу после тапа юзера ядро-факт НЕ читается вообще:
+     * ядро сходится к тапу за ~2 с (fastwatch), и ядро-факт не должен перезаписать
+     * юзер-решение в течение этого окна (корейский глюк v-vh3: тап «откатывался»).
      */
     fun refreshAsync(iface: String, onUpdate: ((Boolean?) -> Unit)? = null) {
-        if (inFlight.get() > 0) return   // уже работаем — пропустим, не копим очередь
+        if (isLatched() || inFlight.get() > 0) return   // latch > очередь > читаем ядро
         exec.execute {
             try {
                 inFlight.incrementAndGet()
@@ -105,6 +112,21 @@ object VhPersist {
         // fastwatch doctor/edge читает intent и немедленно выставляет/снимает rule.
         updateKernelIntent(enabled)
     }
+
+    /**
+     * v-vh4: ЮЗЕР-ТАП — единственный авторитет на 5-секундное окно.
+     * Реализует: (1) мгновенный UI-снимок (snap) без чтения ядра;
+     * (2) intent-файл .vh_intent + wlan2_mode (fastwatch обязан сходиться ≤2 с);
+     * (3) latch — ни refreshAsync, ни中超 kernel-fact не могут перезаписать тап.
+     */
+    fun userTap(iface: String, enabled: Boolean) {
+        userLatch.set(System.currentTimeMillis())
+        snap.set(Snap(iface, enabled, System.currentTimeMillis()))
+        cacheUiState(enabled)
+    }
+
+    fun isLatched(): Boolean =
+        System.currentTimeMillis() - userLatch.get() < LATCH_MS
 
     /**
      * v-vh3: прямая запись разрыва источника — приложение пишет intent-файл от себя.
