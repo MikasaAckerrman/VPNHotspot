@@ -33,6 +33,9 @@ protoc-bin-vendored = "3.2.0"
 panic = "abort"
 lto = "fat"
 codegen-units = 1
+# A1 (opt/phase1): вырезаем debug+symtab из libvpnhotspotd.so (62.3 МБ → ~3-8 МБ).
+# JNI-мост сохраняется: #[no_mangle] extern "C" живут в .dynsym, не в .symtab.
+strip = "symbols"
 
 [profile.dev]
 panic = "abort"

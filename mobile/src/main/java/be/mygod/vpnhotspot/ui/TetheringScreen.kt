@@ -324,11 +324,15 @@ fun TetheringScreen(
                     var active = managed.contains(iface)
                     val watch = monitored.contains(iface)
                     val ifaceInactive = inactive.contains(iface)
-                    // v-vh2: RAM-kill стирает Compose-стейт, но root-стек (fastwatch)
-                    // держит ядро (17500 wlan2→tun0). Факт ядра читаем ТОЛЬКО из кэша
-                    // (UI никогда не ждёт su-процесс), обновление асинхронное.
-                    // Приоритет: факт ядра (кэш) > managed-набор; ядро не врёт.
-                    val kstate = remember(iface) { mutableStateOf(VhPersist.ifaceEnabledCached(iface)) }
+                    // v-vh6: RAM-kill стирает Compose-стейт, но root-стек (fastwatch)
+                    // держит ядро (17500 wlan2→tun0). При открытии приложения тумблер
+                    // ДОЛЖЕН уже быть в состоянии последнего факта (prefs, мгновенно и
+                    // синхронно) — БЕЗ анимации «выкл → вкл» (юзер прямо просил).
+                    val kstate = remember(iface) {
+                        mutableStateOf(
+                            if (managed.isEmpty()) VhPersist.cachedUiState() else managed.contains(iface)
+                        )
+                    }
                     LaunchedEffect(iface) {
                         VhPersist.refreshAsync(iface) { res -> kstate.value = res }
                     }

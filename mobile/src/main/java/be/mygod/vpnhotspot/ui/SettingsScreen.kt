@@ -83,7 +83,6 @@ import be.mygod.vpnhotspot.util.allRoutes
 import be.mygod.vpnhotspot.util.globalNetworkRequestBuilder
 import be.mygod.vpnhotspot.util.launchUrl
 import be.mygod.vpnhotspot.util.readableMessage
-import com.google.android.gms.oss.licenses.v2.OssLicensesMenuActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -94,7 +93,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.PrintWriter
 import java.net.InetAddress
-import com.google.android.gms.oss.licenses.R as OssLicensesR
 
 @Composable
 fun SettingsScreen(snackbarHostState: SnackbarHostState) {
@@ -386,18 +384,7 @@ fun SettingsScreen(snackbarHostState: SnackbarHostState) {
                     onClick = { if (!inspectionMode) context.launchUrl("https://mygod.be/donate/") },
                 )
             }
-            row(OssLicensesR.string.oss_license_title) {
-                PreferenceRow(
-                    icon = R.drawable.ic_license,
-                    title = stringResource(OssLicensesR.string.oss_license_title),
-                    summary = stringResource(OssLicensesR.string.preferences_license_summary),
-                    onClick = {
-                        if (!inspectionMode) {
-                            context.startActivity(Intent(context, OssLicensesMenuActivity::class.java))
-                        }
-                    },
-                )
-            }
+            // v-vh6 (A3): OssLicenses-строки удалены — gms.oss-зависимость убыстряет старфт nopower
         }
     }
 }

@@ -16,7 +16,6 @@ import be.mygod.vpnhotspot.App.Companion.app
 import be.mygod.vpnhotspot.util.Services
 import be.mygod.vpnhotspot.util.UnblockCentral
 import be.mygod.vpnhotspot.widget.SmartSnackbar
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -97,11 +96,7 @@ object RootManager : RootSession(), Logger {
 
     override val rootLifecycleCoroutineContext get() = EmptyCoroutineContext
     override suspend fun handleRootLifecycle(rootProcess: RootProcess) = try {
-        FirebaseCrashlytics.getInstance().apply {
-            setCustomKey("root.connectedGid", rootProcess.peerCredentials.gid)
-            setCustomKey("root.connectedPid", rootProcess.peerCredentials.pid)
-            setCustomKey("root.launchedPid", rootProcess.process.pid)
-        }
+        // v-vh6 (A3): Firebase-ключи удалены
         super.handleRootLifecycle(rootProcess)
     } finally {
         scope.launch {

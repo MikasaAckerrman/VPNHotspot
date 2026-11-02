@@ -27,7 +27,6 @@ import androidx.core.content.getSystemService
 import be.mygod.librootkotlinx.NoShellException
 import be.mygod.vpnhotspot.room.AppDatabase
 import be.mygod.vpnhotspot.root.RootManager
-import be.mygod.vpnhotspot.util.CrashlyticsKeyProvider
 import be.mygod.vpnhotspot.util.DeviceStorageApp
 import be.mygod.vpnhotspot.util.InPlaceExecutor
 import be.mygod.vpnhotspot.util.Services
@@ -35,12 +34,6 @@ import be.mygod.vpnhotspot.util.getRootCause
 import be.mygod.vpnhotspot.util.privateLookup
 import be.mygod.vpnhotspot.widget.SmartSnackbar
 import com.google.android.gms.dynamite.DynamiteModule
-import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.analytics.ParametersBuilder
-import com.google.firebase.analytics.logEvent
-import com.google.firebase.crashlytics.CustomKeysAndValues
-import com.google.firebase.crashlytics.FirebaseCrashlytics
-import com.google.firebase.provider.FirebaseInitProvider
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
 import kotlinx.coroutines.GlobalScope
@@ -85,48 +78,32 @@ class App : Application() {
             e.printStackTrace()
             null
         }
-        FirebaseCrashlytics.getInstance().apply {
-            if (isDebug != null) {
-                setCustomKey("debug", isDebug)
-                setCustomKey("git", BuildGit.VALUE)
-                setCustomKey("uname.release", Os.uname().release)
-                setCustomKey("build", Build.DISPLAY)
-                setCustomKey("ro.vendor.api_level", SystemProperties.get("ro.vendor.api_level", ""))
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setCustomKey("extension_s", SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S))
-                }
-            } else isCrashlyticsCollectionEnabled = false
-        }
+        // v-vh6 (A3): FirebaseCrashlytics удалён — телеметрии нет, старт легче
         Timber.plant(object : Timber.DebugTree() {
             @SuppressLint("LogNotTimber")
             override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
                 if (t == null) {
                     if (priority != Log.DEBUG || BuildConfig.DEBUG) Log.println(priority, tag, message)
-                    FirebaseCrashlytics.getInstance().log("${"XXVDIWEF".getOrElse(priority) { 'X' }}/$tag: $message")
+                    // v-vh6: Firebase-лес убран (A3)
                 } else {
                     if (priority >= Log.WARN || priority == Log.DEBUG) Log.println(priority, tag, message)
                     if (priority >= Log.INFO && t !is NoShellException) {
-                        val crashlyticsKeys = (t as? CrashlyticsKeyProvider)?.crashlyticsKeys
-                            ?: (t.getRootCause() as? ServiceSpecificException)?.let {
-                                CustomKeysAndValues.Builder()
-                                    .putInt("android.serviceSpecific.errorCode", it.errorCode)
-                                    .build()
-                            }
                         val reported = if (t.stackTrace.isEmpty()) {
                             RuntimeException("Stackless exception reported through Timber", t)
                         } else t
-                        if (crashlyticsKeys == null) FirebaseCrashlytics.getInstance().recordException(reported)
-                        else FirebaseCrashlytics.getInstance().recordException(reported, crashlyticsKeys)
+                        // v-vh6: recordException удалено вместе с Firebase (A3)
                     }
                 }
             }
         })
-        StrictMode.setThreadPolicy(StrictMode.ThreadPolicy.Builder().apply {
-            if (BuildConfig.DEBUG) detectAll() else detectNetwork()
-        }.penaltyListener(InPlaceExecutor) { Timber.w(it, "StrictMode thread policy violation") }.build())
-        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().apply {
-            if (BuildConfig.DEBUG) detectAll() else detectFileUriExposure()
-        }.penaltyListener(InPlaceExecutor) { Timber.w(it, "StrictMode VM policy violation") }.build())
+        // v-vh6 (A6): StrictMode только в debug — в release не наказываем и не парсим дескрипторы
+        if (BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder().detectAll()
+                    .penaltyListener(InPlaceExecutor) { Timber.w(it, "StrictMode thread policy violation") }.build())
+            StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().detectAll()
+                    .penaltyListener(InPlaceExecutor) { Timber.w(it, "StrictMode VM policy violation") }.build())
+        }
     }
 
     override fun onCreate() {
@@ -156,11 +133,8 @@ class App : Application() {
      * This method is used to log "expected" and well-handled errors, i.e. we care less about logs, etc.
      * logException is inappropriate sometimes because it flushes all logs that could be used to investigate other bugs.
      */
-    fun logEvent(@Size(min = 1L, max = 40L) event: String, block: ParametersBuilder.() -> Unit = { }) {
-        FirebaseAnalytics.getInstance(app).logEvent(event) {
-            block(this)
-            Timber.i(if (bundle.isEmpty) event else "$event, extras: $bundle")
-        }
+    fun logEvent(event: String) {
+        Timber.i(event) // v-vh6 (A3): без Firebase — просто лог
     }
 
     /**
