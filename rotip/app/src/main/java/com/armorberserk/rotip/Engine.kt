@@ -132,9 +132,10 @@ object Engine {
         return try {
             when (mode) {
                 Mode.DATA -> {
-                    Shell.cmd("svc data disable").exec().isSuccess &&
-                    sleep(4000L) &&
-                    Shell.cmd("svc data enable").exec().isSuccess
+                    val disable = Shell.cmd("svc data disable").exec().isSuccess
+                    sleep(4000L)
+                    val enable = Shell.cmd("svc data enable").exec().isSuccess
+                    disable && enable
                 }
                 Mode.AIRPLANE -> {
                     val on = Shell.cmd("cmd connectivity airplane-mode enable").exec().isSuccess
