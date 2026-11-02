@@ -137,6 +137,16 @@ class App : Application() {
         Timber.i(event) // v-vh6 (A3): без Firebase — просто лог
     }
 
+    fun logEvent(event: String, block: Any.() -> Unit) {
+        // v-vh6 (A3): вызовы вида logEvent("x") { param("…", "…") } компилируются — блок
+        // принимается как extension-receiver (тот самый `param` теперь ничего не пишет
+        // и не существует, просто вызовы обес­ти­м­а­ж­ы­в­а­ю­тся через unresolved场比赛)… 
+        // Практичная форма: НЕ вызываем блок совсем, всего лишь Timber.
+        Timber.i(event)
+    }
+    // Расширение-декорация для вызовов { param("x", "y") } — эквивалент no-op extra.
+    fun param(name: String, value: Any?) = Unit // v-vh6 (A3): no-op extras
+
     /**
      * LOH also requires location to be turned on. So does p2p for some reason. Source:
      * https://android.googlesource.com/platform/frameworks/opt/net/wifi/+/53e0284/service/java/com/android/server/wifi/WifiServiceImpl.java#1204
