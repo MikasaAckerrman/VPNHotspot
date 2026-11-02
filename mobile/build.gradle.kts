@@ -230,8 +230,8 @@ android {
         applicationId = "be.mygod.vpnhotspot"
         minSdk = 29
         targetSdk = 37
-        versionCode = 2015
-        versionName = "3.0.8-vh4"
+        versionCode = 2016
+        versionName = "3.0.8-vh5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     splits {
@@ -246,9 +246,22 @@ android {
         buildConfig = true
         compose = true
     }
+    signingConfigs {
+        // v-vh5: ЕДИНЫЙ dev-ключ для всех CI-сборок («токеен» юзера):
+        // обычный debug keystore на runner'ах одноразовый ⇒ каждую сборку
+        // нельзя было апдейтить (INSTALL_FAILED_UPDATE_INCOMPATIBLE — юзер
+        // был вынужден удалять приложение). Теперь подпись одна навсегда.
+        create("vhDev") {
+            storeFile = file("$rootDir/vh_dev.keystore")
+            storePassword = "ownroot1024"
+            keyAlias = "vhkey"
+            keyPassword = "ownroot1024"
+        }
+    }
     buildTypes {
         debug {
             isPseudoLocalesEnabled = true
+            signingConfig = signingConfigs.getByName("vhDev")
         }
         release {
             isShrinkResources = true
@@ -256,6 +269,7 @@ android {
             // BuildGit already records the commit; AGP's VCS tag task fails when Git packs branch refs.
             vcsInfo.include = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("vhDev")
         }
     }
     packaging.resources.excludes += listOf(

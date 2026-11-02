@@ -105,12 +105,13 @@ object VhPersist {
         App.app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
 
-    fun cacheUiState(enabled: Boolean) {
+    fun cacheUiState(enabled: Boolean, syncIntent: Boolean = true) {
         prefs.edit().putBoolean(KEY_UI_CACHE, enabled).apply()
-        // v-vh3: тумблер РЕАГИРУЕТ — синхронизируем intent-файл с текущим состоянием
-        // (юзер-тап при живом управлении приложением ДОЛЖЕН быть authority),
-        // fastwatch doctor/edge читает intent и немедленно выставляет/снимает rule.
-        updateKernelIntent(enabled)
+        // v-vh5: intent-файл — authority юзера/чата. Пишем его ТОЛЬКО по явному
+        // решению юзера (userTap) и по чат-командам. Kernel-fact (RAM-kill reload)
+        // обновляет только отображение, НЕ intent (иначе «VPN сам включается»
+        // — warmUp перезаписывал intent-файл фактом ядра, resurrect-loop 09:22).
+        if (syncIntent) updateKernelIntent(enabled)
     }
 
     /**
@@ -122,7 +123,7 @@ object VhPersist {
     fun userTap(iface: String, enabled: Boolean) {
         userLatch.set(System.currentTimeMillis())
         snap.set(Snap(iface, enabled, System.currentTimeMillis()))
-        cacheUiState(enabled)
+        cacheUiState(enabled, syncIntent = true)
     }
 
     fun isLatched(): Boolean =
@@ -151,7 +152,10 @@ object VhPersist {
      */
     fun warmUpOnLaunch(iface: String) {
         refreshAsync(iface) { res ->
-            res?.let { cacheUiState(it) }
+            // v-vh5: kernel-fact → ТОЛЬКО отображение/snapshot/prefs.
+            // syncIntent=false — нем ожsterь resurrect-loop (intent писать не надо:
+            // intent-файл — авторитет юзера, ядро сам по нему сходится).
+            res?.let { cacheUiState(it, syncIntent = false) }
         }
     }
 }
