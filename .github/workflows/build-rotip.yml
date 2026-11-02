@@ -23,18 +23,24 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Validate RotIP gradle project
+      - name: Build RotIP APK (release if secrets present, else debug)
+        env:
+          ROTIP_KEYSTORE_B64: ${{ secrets.ROTIP_KEYSTORE_B64 }}
+          ROTIP_KEYSTORE_PASS: ${{ secrets.ROTIP_KEYSTORE_PASS }}
+        shell: bash
         run: |
           cd rotip
-          gradle --version
-
-      - name: Build RotIP debug APK
-        run: |
-          cd rotip
-          gradle :app:assembleDebug --no-daemon
+          if [ -n "$ROTIP_KEYSTORE_B64" ] && [ -n "$ROTIP_KEYSTORE_PASS" ]; then
+            gradle :app:assembleRelease --no-daemon
+            echo "RELEASE=1" >> "$GITHUB_ENV"
+          else
+            gradle :app:assembleDebug --no-daemon
+            echo "RELEASE=0" >> "$GITHUB_ENV"
+          fi
 
       - name: Upload RotIP APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: rotip-debug-apk
-          path: rotip/app/build/outputs/apk/debug/*.apk
+          path: rotip/app/build/outputs/apk/**/app-*.apk
+          if-no-files-found: error

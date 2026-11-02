@@ -60,9 +60,12 @@ object Engine {
     @Volatile var cooldownMs: Long = 90_000L
     @Volatile var lastRotateAt: Long = 0L
 
-    /** Проверить, что приложение имеет живой root (su). */
+    /** Проверить, что приложение имеет живой root (su).
+     *  ФАКТ (ревью 05.11): Shell.isAppGrantedRoot() до первого exec возвращает null
+     *  — его показывало «ПОТЕРЯН» при выданном руте. Shell.getShell() инициализирует
+     *  root-shell (и есть место су-запроса ReSukiSU), .isRoot — честный флаг. */
     fun hasRoot(): Boolean = try {
-        Shell.isAppGrantedRoot() == true
+        Shell.getShell().isRoot
     } catch (_: Throwable) {
         false
     }
@@ -229,6 +232,33 @@ object Engine {
                 append("\"}")
             }
             historyFile(context).appendText(json + "\n")
+            // РЕВЬЮ 05.11 (юзер): «не пришлось бы удалять при удалении приложения» —
+            // persist-копия в /data/adb/rotip/ переживает uninstall APK (root-путь);
+            // при переустановке initState() читает её обратно.
+            try {
+                Shell.cmd("mkdir -p /data/adb/rotip && cp ${historyFile(context).canonicalPath} /data/adb/rotip/history.jsonl").exec()
+            } catch (_: Throwable) { }
         } catch (_: Throwable) { }
+    }
+
+    /** Загрузить lastRotateAt из persist-файла (root-зеркало приоритет, filesDir — fallback).
+     *  Вызывать один раз при старте приложения (initState). */
+    fun initState(context: Context) {
+        try {
+            val ts = run {
+                val r = Shell.cmd("tail -n 1 /data/adb/rotip/history.jsonl 2>/dev/null").exec()
+                val line = r.out.lastOrNull { it.isNotBlank() }
+                Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()
+            }
+            if (ts == null) {
+                val f = historyFile(context)
+                if (f.exists()) {
+                    val line = f.readLines().lastOrNull { it.isNotBlank() }
+                    Regex("\"ts\":(\\d+)").find(line ?: "")?.groupValues?.get(1)?.toLongOrNull()
+                } else 0
+            } else ts
+        } catch (_: Throwable) {
+            0
+        }?.let { lastRotateAt = it }
     }
 }

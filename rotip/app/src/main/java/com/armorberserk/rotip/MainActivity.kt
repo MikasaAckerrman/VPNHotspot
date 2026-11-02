@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
+            Engine.initState(applicationContext)   // cooldown-память из persist-файла
             val ip = Engine.fetchIp(applicationContext)
             state.value = state.value.copy(ipBefore = ip, rootOk = Engine.hasRoot())
         }

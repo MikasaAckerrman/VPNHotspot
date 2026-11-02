@@ -1,8 +1,13 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val ksB64 = System.getenv("ROTIP_KEYSTORE_B64")
+val ksPass = System.getenv("ROTIP_KEYSTORE_PASS")
 
 android {
     namespace = "com.armorberserk.rotip"
@@ -12,13 +17,29 @@ android {
         applicationId = "com.armorberserk.rotip"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    signingConfigs {
+        if (ksB64 != null && ksPass != null) {
+            create("rotipRelease") {
+                val tmp = java.io.File.createTempFile("rotip", ".keystore")
+                tmp.writeBytes(Base64.getDecoder().decode(ksB64))
+                storeFile = tmp
+                storePassword = ksPass
+                keyAlias = "rotip"
+                keyPassword = ksPass
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (ksB64 != null && ksPass != null) {
+                signingConfig = signingConfigs.getByName("rotipRelease")
+            }
         }
     }
     compileOptions {
