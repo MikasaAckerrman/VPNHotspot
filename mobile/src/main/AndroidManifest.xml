@@ -225,7 +225,7 @@
         </provider>
 
         <provider android:name="com.google.firebase.provider.FirebaseInitProvider"
-                  tools:node="remove"/>
+                  tools:node="remove" tools:ignore="MissingClass"/>
         <activity android:name="com.google.android.gms.oss.licenses.OssLicensesMenuActivity"
                   tools:node="remove"/>
         <activity android:name="com.google.android.gms.oss.licenses.OssLicensesActivity"
