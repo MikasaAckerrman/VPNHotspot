@@ -138,15 +138,18 @@ class App : Application() {
         Timber.i(event) // v-vh6 (A3): без Firebase — просто лог
     }
 
-    fun logEvent(event: String, block: Any.() -> Unit) {
-        // v-vh6 (A3): вызовы вида logEvent("x") { param("…", "…") } компилируются — блок
-        // принимается как extension-receiver (тот самый `param` теперь ничего не пишет
-        // и не существует, просто вызовы обес­ти­м­а­ж­ы­в­а­ю­тся через unresolved场比赛)… 
-        // Практичная форма: НЕ вызываем блок совсем, всего лишь Timber.
+    fun logEvent(event: String, block: DynamicExtraBuilder.() -> Unit) {
+        // v-vh6 (A3): вызовы вида logEvent("x") { param("…", "…") } компилируются —
+        // лямбда получает DynamicExtraBuilder (наш no-op replacement), extras не пишутся.
+        block(DynamicExtraBuilder())
         Timber.i(event)
     }
-    // Расширение-декорация для вызовов { param("x", "y") } — эквивалент no-op extra.
-    fun param(name: String, value: Any?) = Unit // v-vh6 (A3): no-op extras
+
+    /** Замена ParametersBuilder.Firebase: собирает extras в map, никуда не отправляет. */
+    class DynamicExtraBuilder {
+        val bundle = mutableMapOf<String, String?>()
+        fun param(name: String, value: Any?) { bundle[name] = value?.toString() }
+    }
 
     /**
      * LOH also requires location to be turned on. So does p2p for some reason. Source:

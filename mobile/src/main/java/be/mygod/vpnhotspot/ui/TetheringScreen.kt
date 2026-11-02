@@ -329,17 +329,19 @@ fun TetheringScreen(
                     // ДОЛЖЕН уже быть в состоянии последнего факта (prefs, мгновенно и
                     // синхронно) — БЕЗ анимации «выкл → вкл» (юзер прямо просил).
                     val kstate = remember(iface) {
+                        // v-vh6 (правка Boolean? mismatch): тип MutableState<Boolean> —
+                        // начальное значение prefs (RAM-kill отображать последний факт)
                         mutableStateOf(
                             if (managed.isEmpty()) VhPersist.cachedUiState() else managed.contains(iface)
                         )
                     }
                     LaunchedEffect(iface) {
-                        VhPersist.refreshAsync(iface) { res -> kstate.value = res }
+                        VhPersist.refreshAsync(iface) { res -> res?.let { kstate.value = it } }
                     }
-                    // v-vh3: kernel-fact применяется ТОЛЬКО если managed пуст (RAM-kill fallback).
+                    // v-vh6: kernel-fact применяется ТОЛЬКО если managed пуст (RAM-kill fallback).
                     // При живом сервисе юзер-тумблер управляет собой (никаких перезаписей ядром).
-                    if (managed.isEmpty() && kstate.value != null && !ifaceInactive) {
-                        active = kstate.value!!
+                    if (managed.isEmpty() && !ifaceInactive) {
+                        active = kstate.value
                     }
                     val vpnTethering = active && !ifaceInactive
                     // v-vh4: LaunchedEffect(vpnTethering) с kfact ?: ПРОПАЛ — он был
