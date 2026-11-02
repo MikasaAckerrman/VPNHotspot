@@ -100,9 +100,27 @@ object VhPersist {
 
     fun cacheUiState(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_UI_CACHE, enabled).apply()
+        // v-vh3: тумблер РЕАГИРУЕТ — синхронизируем intent-файл с текущим состоянием
+        // (юзер-тап при живом управлении приложением ДОЛЖЕН быть authority),
+        // fastwatch doctor/edge читает intent и немедленно выставляет/снимает rule.
+        updateKernelIntent(enabled)
     }
 
-    fun cachedUiState(): Boolean = prefs.getBoolean(KEY_UI_CACHE, false)
+    /**
+     * v-vh3: прямая запись разрыва источника — приложение пишет intent-файл от себя.
+     * Фон тред, timeout 2с; быстрый (обычная запись файла не блокирует).
+     */
+    fun updateKernelIntent(enabled: Boolean) {
+        exec.execute {
+            try {
+                val mode = if (enabled) "vpn" else "novpn"
+                val pb = ProcessBuilder("su", "-c",
+                    "echo $mode > /data/adb/.vh_intent && echo $mode > /data/adb/wlan2_mode")
+                    .redirectErrorStream(true).start()
+                pb.waitFor(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: Throwable) { }
+        }
+    }
 
     /**
      * App.onCreate: хотел был синхронизироваться с ядром — v1 делала это на

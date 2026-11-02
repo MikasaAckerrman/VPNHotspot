@@ -332,10 +332,14 @@ fun TetheringScreen(
                     LaunchedEffect(iface) {
                         VhPersist.refreshAsync(iface) { res -> kstate.value = res }
                     }
-                    if (kstate.value != null && !ifaceInactive) active = kstate.value!!
+                    // v-vh3: kernel-fact применяется ТОЛЬКО если managed пуст (RAM-kill fallback).
+                    // При живом сервисе юзер-тумблер управляет собой (никаких перезаписей ядром).
+                    if (managed.isEmpty() && kstate.value != null && !ifaceInactive) {
+                        active = kstate.value!!
+                    }
                     val vpnTethering = active && !ifaceInactive
-                    // v-vh2: запоминаем только фактическое разделение UI между Compose (managed)
-                    // и ядром (rule) — чтобы RAM-kill восстановил корректную картину.
+                    // v-vh3: кэш + intent-синк: юзер-нажатие через sync-мост,
+                    // официальный путь TetheringScreen → cacheUiState → fastwatch.
                     LaunchedEffect(vpnTethering) {
                         val kfact = VhPersist.ifaceEnabledCached(iface)
                         VhPersist.cacheUiState(kfact ?: vpnTethering)
