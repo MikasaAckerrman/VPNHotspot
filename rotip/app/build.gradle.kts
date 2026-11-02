@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Base64
 
 plugins {
@@ -24,7 +25,7 @@ android {
     signingConfigs {
         if (ksB64 != null && ksPass != null) {
             create("rotipRelease") {
-                val tmp = java.io.File.createTempFile("rotip", ".keystore")
+                val tmp = File.createTempFile("rotip", ".keystore")
                 tmp.writeBytes(Base64.getDecoder().decode(ksB64))
                 storeFile = tmp
                 storePassword = ksPass
